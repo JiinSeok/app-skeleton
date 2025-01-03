@@ -13,6 +13,16 @@
     "build": "remix vite:build",
     "start": "remix-serve ./build/server/index.js"
   },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --cache --fix",
+      "prettier --cache --write"
+    ],
+    "*.{css}": [
+      "stylelint --fix",
+      "prettier --cache --write"
+    ]
+  },
   "dependencies": {
     "@remix-run/node": "^2.15.2",
     "@remix-run/react": "^2.15.2",

@@ -1,0 +1,91 @@
+{
+  "root": true,
+  "parserOptions": {
+    "project": ["./tsconfig.json"],
+    "ecmaVersion": "latest",
+    "ecmaFeatures": {
+      "jsx": true
+    },
+    "sourceType": "module"
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es6": true
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "**/*.min.js", "public/**/*.js", "!**/.server", "!**/.client"],
+  "extends": [
+    "eslint:recommended",
+    "standard",
+    "prettier"
+  ],
+  "settings": {
+    "import/resolver": {
+      "node": {
+        "paths": ["src"]
+      }
+    }
+  },
+  "rules": {
+    "import/no-absolute-path": ["error", { "esmodule": true, "commonjs": true, "amd": true }]
+  },
+
+  "overrides": [
+    {
+      "files": ["src/**/*.{js,jsx,ts,tsx}"],
+      "plugins": ["react", "jsx-a11y"],
+      "extends": [
+        "plugin:react/recommended",
+        "plugin:react/jsx-runtime",
+        "plugin:react-hooks/recommended",
+        "plugin:jsx-a11y/recommended"
+      ],
+      "settings": {
+        "react": {
+          "version": "detect"
+        },
+        "formComponents": ["Form"],
+        "linkComponents": [
+          { "name": "Link", "linkAttribute": "to" },
+          { "name": "NavLink", "linkAttribute": "to" }
+        ],
+        "import/resolver": {
+          "typescript": {}
+        }
+      },
+      "rules": {
+        "semi": ["warn", "never"],
+        "react/jsx-uses-vars": "warn",
+        "react/jsx-key": "error",
+        "react/prop-types": "warn"
+      }
+    },
+
+    {
+      "files": ["src/**/*.{ts,tsx}"],
+      "plugins": ["@typescript-eslint", "import"],
+      "parser": "@typescript-eslint/parser",
+      "settings": {
+        "import/internal-regex": "^~/",
+        "import/resolver": {
+          "node": {
+            "extensions": [".ts", ".tsx"]
+          },
+          "typescript": {
+            "alwaysTryTypes": true
+          }
+        }
+      },
+      "extends": [
+        "plugin:@typescript-eslint/recommended",
+        "plugin:import/recommended",
+        "plugin:import/typescript"
+      ],
+      "rules": {
+        "@typescript-eslint/strict-boolean-expressions": "warn",
+        "@typescript-eslint/no-explicit-any": "warn",
+        "@typescript-eslint/no-require-imports": "off"
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "overrides": [
+    {
+      "files": [
+        "build/**.*",
+        "dist/**/*.js",
+        "node_modules/**.*",
+        "package-lock.json",
+        "src/styles/reset.css",
+        "*.min.*"
+      ],
+      "options": { "parser": "json" }
+    }
+  ],
+  "trailingComma": "all",
+  "tabWidth": 2,
+  "endOfLine": "lf",
+  "arrowParens": "always",
+  "singleQuote": true,
+  "semi": false,
+  "plugins": ["@trivago/prettier-plugin-sort-imports"],
+  "printWidth": 80,
+  "importOrder": [
+    "^@utils/(.*)$",
+    "^@apis/(.*)$",
+    "^@hooks/(.*)$",
+    "^@recoils/(.*)$",
+    "^@pages/(.*)$",
+    "^@base/(.*)$",
+    "^@common/(.*)$",
+    "^@components/(.*)$",
+    "^@styles/(.*)$",
+    "^[./]"
+  ],
+  "importOrderSeparation": true,
+  "importOrderSortSpecifiers": true
+}
