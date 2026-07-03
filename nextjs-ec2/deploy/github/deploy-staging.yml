@@ -1,0 +1,191 @@
+# 사용법: 이 파일을 리포지토리 루트의 .github/workflows/deploy-staging.yml 로 옮겨야
+# GitHub Actions가 인식한다(하위 폴더의 워크플로는 실행되지 않는다).
+#
+# 필요한 GitHub Actions variables(환경 'staging'):
+#   AWS_DEPLOY_ROLE_ARN, DEPLOY_HOST, DEPLOY_SECURITY_GROUP_ID, DEPLOY_SECRET_ID, AWS_REGION
+# AWS Secrets Manager(DEPLOY_SECRET_ID)에 넣을 값:
+#   STAGING_SSH_PRIVATE_KEY, POSTGRES_PASSWORD, AUTH_SECRET, S3_BUCKET, INITIAL_ADMIN_*
+name: Deploy Staging to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-staging.yml'
+      - 'deploy/ec2/**'
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'next.config.ts'
+      - 'drizzle.config.ts'
+      - 'tsconfig.json'
+  workflow_dispatch:
+
+concurrency:
+  group: app-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  IMAGE_NAME: app
+  AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-2' }}
+  STAGING_HOST: ${{ vars.DEPLOY_HOST }}
+  STAGING_SECURITY_GROUP_ID: ${{ vars.DEPLOY_SECURITY_GROUP_ID }}
+  STAGING_SECRET_ID: ${{ vars.DEPLOY_SECRET_ID || '/staging/app/app' }}
+
+jobs:
+  deploy:
+    name: Build and deploy staging
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate deployment config
+        run: |
+          set -euo pipefail
+          : "${AWS_DEPLOY_ROLE_ARN:?Set AWS_DEPLOY_ROLE_ARN in GitHub Actions variables}"
+          : "${STAGING_HOST:?Set DEPLOY_HOST in GitHub Actions environment variables}"
+          : "${STAGING_SECURITY_GROUP_ID:?Set DEPLOY_SECURITY_GROUP_ID in GitHub Actions environment variables}"
+          : "${STAGING_SECRET_ID:?Set DEPLOY_SECRET_ID in GitHub Actions environment variables}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: app-staging-${{ github.run_id }}
+
+      - name: Authorize runner SSH access
+        run: |
+          set -euo pipefail
+          runner_ipv4="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          if ! [[ "${runner_ipv4}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unable to resolve runner IPv4 address" >&2
+            exit 1
+          fi
+
+          runner_ssh_cidr="${runner_ipv4}/32"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${STAGING_SECURITY_GROUP_ID}" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${runner_ssh_cidr},Description=github-actions-${GITHUB_RUN_ID}}]" \
+            >/dev/null || true
+
+          echo "RUNNER_SSH_CIDR=${runner_ssh_cidr}" >> "${GITHUB_ENV}"
+
+      - name: Load deployment SSH key
+        run: |
+          set -euo pipefail
+          secret_json="$(aws secretsmanager get-secret-value --secret-id "${STAGING_SECRET_ID}" --region "${AWS_REGION}" --query SecretString --output text)"
+          staging_ssh_private_key="$(jq -r '.STAGING_SSH_PRIVATE_KEY // empty' <<< "${secret_json}")"
+          : "${staging_ssh_private_key:?Set STAGING_SSH_PRIVATE_KEY in AWS Secrets Manager ${STAGING_SECRET_ID}}"
+
+          while IFS= read -r key_line; do
+            if [ -n "${key_line}" ]; then
+              echo "::add-mask::${key_line}"
+            fi
+          done <<< "${staging_ssh_private_key}"
+
+          {
+            echo "STAGING_SSH_PRIVATE_KEY<<EOF"
+            printf '%s\n' "${staging_ssh_private_key}"
+            echo "EOF"
+          } >> "${GITHUB_ENV}"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -m 700 -d "${HOME}/.ssh"
+          printf '%s\n' "${STAGING_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/app_staging_key"
+          chmod 600 "${HOME}/.ssh/app_staging_key"
+
+          for attempt in $(seq 1 10); do
+            if ssh-keyscan -T 10 -H "${STAGING_HOST}" >> "${HOME}/.ssh/known_hosts"; then
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "Unable to read SSH host key from ${STAGING_HOST}" >&2
+          exit 1
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          image_owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          image_repository="ghcr.io/${image_owner}/${IMAGE_NAME}"
+          image_tag="${image_repository}:${GITHUB_SHA}"
+          image_latest="${image_repository}:staging"
+
+          docker build -t "${image_tag}" -t "${image_latest}" .
+          docker push "${image_tag}"
+          docker push "${image_latest}"
+
+          echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+
+      - name: Upload runtime files
+        env:
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d deploy/tmp
+          deploy_env="deploy/tmp/staging-deploy.env"
+          trap 'rm -f "${deploy_env}"' EXIT
+
+          {
+            printf 'IMAGE_TAG='
+            printf '%q' "${IMAGE_TAG}"
+            printf '\nAWS_REGION='
+            printf '%q' "${AWS_REGION}"
+            printf '\nSTAGING_SECRET_ID='
+            printf '%q' "${STAGING_SECRET_ID}"
+            printf '\nGHCR_ACTOR='
+            printf '%q' "${GHCR_ACTOR}"
+            printf '\nGHCR_TOKEN='
+            printf '%q' "${GHCR_TOKEN}"
+            printf '\n'
+          } > "${deploy_env}"
+          chmod 600 "${deploy_env}"
+
+          scp -i "${HOME}/.ssh/app_staging_key" deploy/ec2/compose.yml "ubuntu@${STAGING_HOST}:/tmp/app-compose.yml"
+          scp -i "${HOME}/.ssh/app_staging_key" deploy/ec2/deploy.sh "ubuntu@${STAGING_HOST}:/tmp/app-deploy.sh"
+          scp -i "${HOME}/.ssh/app_staging_key" "${deploy_env}" "ubuntu@${STAGING_HOST}:/tmp/app-deploy.env"
+
+      - name: Run deploy
+        run: |
+          set -euo pipefail
+          ssh -i "${HOME}/.ssh/app_staging_key" "ubuntu@${STAGING_HOST}" "bash /tmp/app-deploy.sh"
+
+      - name: Revoke runner SSH access
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -z "${RUNNER_SSH_CIDR:-}" ]; then
+            exit 0
+          fi
+
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${STAGING_SECURITY_GROUP_ID}" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "${RUNNER_SSH_CIDR}" \
+            >/dev/null || true

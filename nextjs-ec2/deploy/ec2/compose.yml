@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: app-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U app -d app']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - app
+
+  migrate:
+    image: ${IMAGE_TAG:?IMAGE_TAG is required}
+    profiles: ['migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/app
+    command: ['pnpm', 'db:push']
+    networks:
+      - app
+
+  app:
+    image: ${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/app
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+      AUTH_URL: ${AUTH_URL:-https://${PUBLIC_DOMAIN:-staging.example.com}}
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      S3_BUCKET: ${S3_BUCKET:-}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-}
+    ports:
+      - '127.0.0.1:3000:3000'
+    networks:
+      - app
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: app-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-staging.example.com}
+    command:
+      [
+        'caddy',
+        'reverse-proxy',
+        '--from',
+        '${PUBLIC_DOMAIN:-staging.example.com}',
+        '--to',
+        'app:3000',
+      ]
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - app
+
+volumes:
+  caddy-data:
+    name: app-caddy-data
+  caddy-config:
+    name: app-caddy-config
+
+networks:
+  app:
+    name: app
