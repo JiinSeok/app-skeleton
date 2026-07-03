@@ -6,8 +6,8 @@
 
 | 위치 | 내용 |
 |---|---|
-| `main` · [`nextjs-ec2/`](./nextjs-ec2) | **Next.js(App Router) + EC2/Docker/Caddy 배포** 스켈레톤. shadcn/ui · Auth.js v5 · Drizzle · pnpm |
-| [`remix`](../../tree/remix) 브랜치 | Remix + Vite + Tailwind 스켈레톤 (기존 `my-remix-app-skeleton`) |
+| `main` · [`nextjs-ec2/`](./nextjs-ec2) | **Next.js 15(App Router) + EC2/Docker/Caddy 배포** 스켈레톤. shadcn/ui · Auth.js v5 · Drizzle · Tailwind v4 · pnpm |
+| [`remix`](../../tree/remix) 브랜치 | **Remix 2.15 + Vite + Tailwind + React 18** 스켈레톤 (pretendard 폰트, lint 설정 포함). 기존 `my-remix-app-skeleton` |
 
 ## nextjs-ec2 요약
 
